@@ -1,0 +1,25 @@
+# Build directories
+backend/target/
+frontend/node_modules/
+frontend/dist/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+*.swp
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+*.project
+*.classpath
+*.settings/
+
+# Environment variables
+frontend/.env
+frontend/.env.local
+backend/src/main/resources/application-secret.properties
+
+# Logs
+*.log
