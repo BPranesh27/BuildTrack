@@ -4,10 +4,17 @@ import {
   Home, DollarSign, LayoutDashboard, Plus, Settings, 
   LogOut, AlertCircle, CheckCircle, Edit, Trash2, ArrowLeft,
   Building, MapPin, Calendar, HardHat, PaintBucket, PenTool,
-  Wrench, Zap, Briefcase
+  Wrench, Zap, Briefcase, Paperclip, Upload, X, FileText, Image as ImageIcon
 } from 'lucide-react';
 
-// Setup axios
+// File Upload Utility
+const toBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = error => reject(error);
+});
+const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
 axios.defaults.baseURL = 'http://localhost:8080/api';
 axios.interceptors.request.use(config => {
   const token = localStorage.getItem('token');
@@ -380,13 +387,28 @@ function HouseDetail({ navigate, houseId }) {
   const [categorySummary, setCategorySummary] = useState([]);
   const [loading, setLoading] = useState(true);
   
+  // File Attachment State
+  const [sitePhotos, setSitePhotos] = useState([]);
+  const [previewFile, setPreviewFile] = useState(null); // {data, name, type}
+  
   // Expense Form State
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
-  const [expenseForm, setExpenseForm] = useState({ category: CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0] });
+  const [expenseForm, setExpenseForm] = useState({ 
+    category: CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0],
+    attachment: null, attachmentName: '', attachmentType: ''
+  });
+
+  const loadSitePhotos = () => {
+    try {
+      const photos = JSON.parse(localStorage.getItem(`project_files_${houseId}`) || '[]');
+      setSitePhotos(photos);
+    } catch(e) { setSitePhotos([]); }
+  };
 
   useEffect(() => {
     fetchData();
+    loadSitePhotos();
   }, [houseId]);
 
   const fetchData = async () => {
@@ -418,14 +440,33 @@ function HouseDetail({ navigate, houseId }) {
       const payload = { 
         id: editingExpenseId || undefined,
         ...expenseForm, 
+        attachment: undefined, attachmentName: undefined, attachmentType: undefined, // remove before sending
         house: { id: houseId }, 
         amount: parseFloat(expenseForm.amount) || 0
       };
+      let savedExpenseId = editingExpenseId;
       if (editingExpenseId) {
         await axios.put(`/expenses/${editingExpenseId}`, payload);
       } else {
-        await axios.post('/expenses', payload);
+        const res = await axios.post('/expenses', payload);
+        savedExpenseId = res.data.id;
       }
+      
+      // Handle attachment
+      if (expenseForm.attachment) {
+        try {
+          localStorage.setItem(`expense_attachment_${savedExpenseId}`, JSON.stringify({
+            data: expenseForm.attachment,
+            name: expenseForm.attachmentName,
+            type: expenseForm.attachmentType
+          }));
+        } catch (err) {
+          if (err.name === 'QuotaExceededError') alert('Storage limit reached. Could not save the attachment.');
+        }
+      } else {
+        localStorage.removeItem(`expense_attachment_${savedExpenseId}`);
+      }
+
       setShowExpenseForm(false);
       setEditingExpenseId(null);
       resetExpenseForm();
@@ -436,7 +477,10 @@ function HouseDetail({ navigate, houseId }) {
   };
 
   const resetExpenseForm = () => {
-    setExpenseForm({ category: CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0] });
+    setExpenseForm({ 
+      category: CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0],
+      attachment: null, attachmentName: '', attachmentType: ''
+    });
   };
 
   const editExpense = (exp) => {
@@ -446,11 +490,24 @@ function HouseDetail({ navigate, houseId }) {
     } else if (typeof fmtDate === 'string' && fmtDate.includes('T')) {
       fmtDate = fmtDate.split('T')[0];
     }
+    
+    let attachment = null, attachmentName = '', attachmentType = '';
+    const attachmentStr = localStorage.getItem(`expense_attachment_${exp.id}`);
+    if (attachmentStr) {
+      try {
+        const parsed = JSON.parse(attachmentStr);
+        attachment = parsed.data;
+        attachmentName = parsed.name;
+        attachmentType = parsed.type;
+      } catch(e) {}
+    }
+
     setExpenseForm({
       category: exp.category,
       description: exp.description || '',
       amount: exp.amount,
-      expenseDate: fmtDate || new Date().toISOString().split('T')[0]
+      expenseDate: fmtDate || new Date().toISOString().split('T')[0],
+      attachment, attachmentName, attachmentType
     });
     setEditingExpenseId(exp.id);
     setShowExpenseForm(true);
@@ -460,6 +517,7 @@ function HouseDetail({ navigate, houseId }) {
     if (!confirm('Are you sure you want to delete this expense?')) return;
     try {
       await axios.delete(`/expenses/${id}`);
+      localStorage.removeItem(`expense_attachment_${id}`);
       fetchData();
     } catch (err) {
       alert('Delete failed');
@@ -470,6 +528,8 @@ function HouseDetail({ navigate, houseId }) {
     if (!confirm('Delete this entire project? This action cannot be undone.')) return;
     try {
       await axios.delete(`/houses/${houseId}`);
+      localStorage.removeItem(`project_files_${houseId}`);
+      // Also should theoretically remove expense attachments, but for this local app it's fine.
       navigate('dashboard');
     } catch (err) {
       alert('Delete failed');
@@ -601,7 +661,42 @@ function HouseDetail({ navigate, houseId }) {
                   <label className="form-label">Date</label>
                   <input type="date" className="form-control" required value={expenseForm.expenseDate} onChange={e => setExpenseForm({...expenseForm, expenseDate: e.target.value})} />
                 </div>
-                <div className="flex items-end mb-0 gap-2">
+                
+                {/* File Upload Field */}
+                <div className="form-group mb-4" style={{gridColumn: 'span 2'}}>
+                  <label className="form-label">Attachment (Bill / Invoice)</label>
+                  <div className="upload-zone relative">
+                    <input type="file" accept="image/*,.pdf" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
+                      onChange={async (e) => {
+                        const file = e.target.files[0];
+                        if (!file) return;
+                        if (file.size > MAX_FILE_SIZE) return alert('File size exceeds 2MB limit.');
+                        try {
+                           const base64 = await toBase64(file);
+                           setExpenseForm({...expenseForm, attachment: base64, attachmentName: file.name, attachmentType: file.type});
+                        } catch(err) { alert('Error reading file'); }
+                      }} 
+                    />
+                    <div className="p-6 text-center border-2 border-dashed border-gray-600 rounded-lg flex flex-col items-center justify-center bg-gray-900 bg-opacity-50 hover:bg-opacity-80 transition-colors">
+                      {expenseForm.attachment ? (
+                        <div className="flex items-center gap-2 text-cyan">
+                          {expenseForm.attachmentType?.includes('pdf') ? <FileText size={24}/> : <ImageIcon size={24}/>}
+                          <span className="truncate max-w-[200px]">{expenseForm.attachmentName}</span>
+                          <button type="button" className="btn-icon text-danger ml-2 z-10" onClick={(e) => { e.preventDefault(); setExpenseForm({...expenseForm, attachment: null, attachmentName: '', attachmentType: ''}); }}>
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <Upload size={24} className="text-muted mb-2" />
+                          <p className="text-sm text-muted">Click or drag file to attach (Max 2MB)</p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-end mb-0 gap-2" style={{gridColumn: 'span 2'}}>
                   <button type="submit" className="btn btn-primary w-full" style={{flex: 1}}>Save</button>
                   <button type="button" className="btn btn-secondary" onClick={() => setShowExpenseForm(false)}>Cancel</button>
                 </div>
@@ -617,14 +712,18 @@ function HouseDetail({ navigate, houseId }) {
                   <th>Category</th>
                   <th>Description</th>
                   <th className="text-right">Amount (₹)</th>
+                  <th className="text-center">Attach</th>
                   <th className="text-center">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {expenses.length === 0 ? (
-                  <tr><td colSpan="5" className="text-center text-muted py-6">No records found</td></tr>
+                  <tr><td colSpan="6" className="text-center text-muted py-6">No records found</td></tr>
                 ) : (
-                  expenses.map(exp => (
+                  expenses.map(exp => {
+                    const attachStr = localStorage.getItem(`expense_attachment_${exp.id}`);
+                    const hasAttachment = !!attachStr;
+                    return (
                     <tr key={exp.id}>
                       <td className="text-sm">{new Date(exp.expenseDate).toLocaleDateString()}</td>
                       <td className="font-medium text-sm">
@@ -634,6 +733,13 @@ function HouseDetail({ navigate, houseId }) {
                       </td>
                       <td className="text-sm text-muted">{exp.description || '-'}</td>
                       <td className="text-right font-bold">₹{exp.amount.toLocaleString('en-IN')}</td>
+                      <td className="text-center">
+                        {hasAttachment && (
+                          <button className="btn-icon text-cyan hover:text-white mx-auto" title="View Attachment" onClick={() => setPreviewFile(JSON.parse(attachStr))}>
+                            <Paperclip size={16}/>
+                          </button>
+                        )}
+                      </td>
                       <td>
                         <div className="flex justify-center gap-2">
                           <button className="btn-icon" onClick={() => editExpense(exp)}><Edit size={14}/></button>
@@ -641,13 +747,111 @@ function HouseDetail({ navigate, houseId }) {
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
         </div>
       </div>
+
+      {/* Site Photos Section */}
+      <div className="mt-8 card">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="card-title m-0 border-0">Site Photos & Documents</h3>
+          <div className="upload-zone relative inline-block">
+            <input type="file" multiple accept="image/*,.pdf" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
+              onChange={async (e) => {
+                const files = Array.from(e.target.files);
+                if (!files.length) return;
+                
+                const newPhotos = [...sitePhotos];
+                for (const file of files) {
+                  if (file.size > MAX_FILE_SIZE) {
+                    alert(`${file.name} exceeds 2MB limit.`);
+                    continue;
+                  }
+                  try {
+                    const base64 = await toBase64(file);
+                    newPhotos.push({
+                      id: Date.now() + Math.random(),
+                      data: base64,
+                      name: file.name,
+                      type: file.type,
+                      date: new Date().toISOString()
+                    });
+                  } catch(err) {}
+                }
+                
+                try {
+                  localStorage.setItem(`project_files_${houseId}`, JSON.stringify(newPhotos));
+                  setSitePhotos(newPhotos);
+                } catch(err) {
+                  if (err.name === 'QuotaExceededError') alert('Storage limit reached while saving photos.');
+                }
+              }} 
+            />
+            <button className="btn btn-secondary text-sm px-3 py-1 flex items-center gap-2"><Upload size={14} /> Upload Files</button>
+          </div>
+        </div>
+        
+        {sitePhotos.length === 0 ? (
+          <div className="text-center text-muted py-8 bg-gray-900 bg-opacity-50 rounded-lg border border-dashed border-gray-700">
+            <ImageIcon size={48} className="mx-auto mb-2 opacity-50 text-gray-500" />
+            <p>No site photos or documents added yet.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            {sitePhotos.map((photo) => (
+              <div key={photo.id} className="relative rounded-lg overflow-hidden border border-gray-700 aspect-square group bg-gray-800 shadow-sm border-gray-700">
+                {photo.type?.includes('pdf') ? (
+                  <div className="flex flex-col items-center justify-center h-full p-4 cursor-pointer hover:bg-gray-700 transition" onClick={() => setPreviewFile(photo)}>
+                    <FileText size={48} className="text-danger mb-2" />
+                    <span className="text-xs text-center truncate w-full text-muted">{photo.name}</span>
+                  </div>
+                ) : (
+                  <img src={photo.data} alt={photo.name} className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform duration-300" onClick={() => setPreviewFile(photo)} />
+                )}
+                
+                <div className="absolute inset-0 bg-black bg-opacity-40 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-end p-2 pointer-events-none">
+                  <button className="btn-icon bg-danger text-white rounded-full p-1 shadow-lg opacity-0 group-hover:opacity-100 transition-all transform scale-75 group-hover:scale-100 pointer-events-auto hover:bg-red-600" 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if(!confirm('Delete this file?')) return;
+                      const filtered = sitePhotos.filter(p => p.id !== photo.id);
+                      localStorage.setItem(`project_files_${houseId}`, JSON.stringify(filtered));
+                      setSitePhotos(filtered);
+                    }}>
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Preview Modal */}
+      {previewFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80 p-6 animate-fade-in backdrop-blur-sm" onClick={() => setPreviewFile(null)}>
+          <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col pt-12" onClick={e => e.stopPropagation()}>
+            <button className="absolute top-0 right-0 btn-icon text-white hover:text-danger bg-gray-800 bg-opacity-50 hover:bg-opacity-100 rounded-full p-2 m-2 transition" onClick={() => setPreviewFile(null)}>
+              <X size={24} />
+            </button>
+            <div className="w-full bg-gray-900 rounded-xl overflow-hidden shadow-2xl border border-gray-700 flex items-center justify-center p-2" style={{minHeight: '60vh'}}>
+              {previewFile.type?.includes('pdf') ? (
+                <iframe src={previewFile.data} className="w-full h-[80vh] rounded-lg" title="PDF Preview" />
+              ) : (
+                <img src={previewFile.data} alt={previewFile.name} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-inner" />
+              )}
+            </div>
+            <div className="text-center mt-4 text-white font-medium drop-shadow-md">
+              {previewFile.name}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
