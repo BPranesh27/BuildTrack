@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -88,6 +89,7 @@ public class ExpenseController {
         return ResponseEntity.ok(expenseRepository.save(expense));
     }
 
+    @Transactional
     @PutMapping("/{id}")
     public ResponseEntity<Expense> updateExpense(@PathVariable Long id, @RequestBody Expense expenseDetails, @AuthenticationPrincipal UserDetails userDetails) {
         User user = getAuthenticatedUser(userDetails);
@@ -117,6 +119,7 @@ public class ExpenseController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
+    @Transactional
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteExpense(@PathVariable Long id, @AuthenticationPrincipal UserDetails userDetails) {
         User user = getAuthenticatedUser(userDetails);

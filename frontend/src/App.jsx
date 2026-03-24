@@ -24,13 +24,27 @@ axios.interceptors.request.use(config => {
   return config;
 }, error => Promise.reject(error));
 
-const CATEGORIES = [
+axios.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response && error.response.status === 401) {
+      if (localStorage.getItem('token')) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.reload();
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+const DEFAULT_CATEGORIES = [
   'Labour Charges',
-  'Materials (Bricks, Steel, Cement)',
-  'Interiors & Finishing',
-  'Paint & Flooring',
+  'Materials',
+  'Electric Work',
   'Plumbing',
-  'Electrician'
+  'Interiors',
+  'Other (specify...)'
 ];
 
 export default function App() {
@@ -386,6 +400,7 @@ function HouseDetail({ navigate, houseId }) {
   const [expenses, setExpenses] = useState([]);
   const [categorySummary, setCategorySummary] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedCategory, setSelectedCategory] = useState(null);
   
   // File Attachment State
   const [sitePhotos, setSitePhotos] = useState([]);
@@ -395,9 +410,10 @@ function HouseDetail({ navigate, houseId }) {
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [expenseForm, setExpenseForm] = useState({ 
-    category: CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0],
+    category: DEFAULT_CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0],
     attachment: null, attachmentName: '', attachmentType: ''
   });
+  const [customCategoryInput, setCustomCategoryInput] = useState('');
 
   const loadSitePhotos = () => {
     try {
@@ -437,9 +453,27 @@ function HouseDetail({ navigate, houseId }) {
   const handleExpenseSubmit = async (e) => {
     e.preventDefault();
     try {
+      let finalCategory = expenseForm.category;
+      if (finalCategory === 'Other (specify...)') {
+        const trimmed = customCategoryInput.trim();
+        if (!trimmed) return alert('Please specify a custom category name');
+        finalCategory = trimmed;
+      }
+
+      // Ensure date is in ISO format YYYY-MM-DD
+      let formattedDate = expenseForm.expenseDate;
+      if (formattedDate) {
+        const d = new Date(formattedDate);
+        if (!isNaN(d.getTime())) {
+          formattedDate = d.toISOString().split('T')[0];
+        }
+      }
+
       const payload = { 
         id: editingExpenseId || undefined,
-        ...expenseForm, 
+        ...expenseForm,
+        expenseDate: formattedDate,
+        category: finalCategory,
         attachment: undefined, attachmentName: undefined, attachmentType: undefined, // remove before sending
         house: { id: houseId }, 
         amount: parseFloat(expenseForm.amount) || 0
@@ -472,15 +506,17 @@ function HouseDetail({ navigate, houseId }) {
       resetExpenseForm();
       fetchData();
     } catch (err) {
-      alert('Failed to save expense');
+      const msg = err.response?.data?.message || err.response?.data || 'Failed to save expense';
+      alert(`Error: ${typeof msg === 'string' ? msg : 'Server error occurred'}`);
     }
   };
 
   const resetExpenseForm = () => {
     setExpenseForm({ 
-      category: CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0],
+      category: selectedCategory || DEFAULT_CATEGORIES[0], description: '', amount: '', expenseDate: new Date().toISOString().split('T')[0],
       attachment: null, attachmentName: '', attachmentType: ''
     });
+    setCustomCategoryInput('');
   };
 
   const editExpense = (exp) => {
@@ -502,13 +538,21 @@ function HouseDetail({ navigate, houseId }) {
       } catch(e) {}
     }
 
+    let formCategory = exp.category;
+    let customInput = '';
+    if (!DEFAULT_CATEGORIES.includes(exp.category)) {
+      formCategory = 'Other (specify...)';
+      customInput = exp.category;
+    }
+
     setExpenseForm({
-      category: exp.category,
+      category: formCategory,
       description: exp.description || '',
       amount: exp.amount,
       expenseDate: fmtDate || new Date().toISOString().split('T')[0],
       attachment, attachmentName, attachmentType
     });
+    setCustomCategoryInput(customInput);
     setEditingExpenseId(exp.id);
     setShowExpenseForm(true);
   };
@@ -520,7 +564,8 @@ function HouseDetail({ navigate, houseId }) {
       localStorage.removeItem(`expense_attachment_${id}`);
       fetchData();
     } catch (err) {
-      alert('Delete failed');
+      const msg = err.response?.data?.message || err.response?.data || 'Delete failed';
+      alert(`Error: ${typeof msg === 'string' ? msg : 'Operation failed'}`);
     }
   };
 
@@ -538,6 +583,28 @@ function HouseDetail({ navigate, houseId }) {
 
   if (loading || !house) return <div className="text-center mt-6">Loading details...</div>;
 
+  const baseCategories = ['Labour Charges', 'Materials', 'Electric Work', 'Plumbing', 'Interiors'];
+  const categoryStatsMap = {};
+  baseCategories.forEach(name => { categoryStatsMap[name] = { name, total: 0, count: 0 }; });
+
+  let maxCatAmount = 1;
+  expenses.forEach(exp => {
+    const catName = exp.category;
+    if (!categoryStatsMap[catName]) {
+      categoryStatsMap[catName] = { name: catName, total: 0, count: 0 };
+    }
+    categoryStatsMap[catName].total += exp.amount;
+    categoryStatsMap[catName].count += 1;
+    if (categoryStatsMap[catName].total > maxCatAmount) maxCatAmount = categoryStatsMap[catName].total;
+  });
+
+  const customCategories = Object.values(categoryStatsMap).filter(c => !baseCategories.includes(c.name));
+  const categoryStats = [
+    ...baseCategories.map(name => categoryStatsMap[name]),
+    ...customCategories,
+    { name: 'Other (specify...)', total: 0, count: 0, isButton: true }
+  ];
+
   const profitLoss = house.salePrice - totalSpent;
   const pnlClass = profitLoss >= 0 ? 'text-success' : 'text-danger';
 
@@ -545,13 +612,11 @@ function HouseDetail({ navigate, houseId }) {
   const getCatIcon = (cat) => {
     if (cat.includes('Labour')) return <HardHat size={16} />;
     if (cat.includes('Material')) return <Building size={16} />;
-    if (cat.includes('Paint')) return <PaintBucket size={16} />;
+    if (cat.includes('Interiors')) return <PaintBucket size={16} />;
     if (cat.includes('Plumb')) return <Wrench size={16} />;
     if (cat.includes('Elect')) return <Zap size={16} />;
     return <PenTool size={16} />;
   };
-
-  const maxCatAmount = Math.max(...categorySummary.map(c => c.total), 1);
 
   return (
     <div className="animate-fade-in">
@@ -603,38 +668,58 @@ function HouseDetail({ navigate, houseId }) {
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="card" style={{gridColumn: 'span 1'}}>
-          <h3 className="card-title">Expense Breakdown</h3>
-          <div className="mt-4 flex flex-col gap-4">
-            {categorySummary.length === 0 ? (
-              <div className="text-muted text-sm text-center py-4">No expenses yet</div>
-            ) : (
-              categorySummary.map((cat, i) => {
-                const percent = (cat.total / maxCatAmount) * 100;
-                return (
-                  <div key={i}>
-                    <div className="flex justify-between text-sm mb-1">
-                      <div className="flex items-center gap-2">
-                         <span className="text-cyan">{getCatIcon(cat.category)}</span>
-                         <span>{cat.category}</span>
-                      </div>
-                      <span className="font-bold">₹{cat.total.toLocaleString('en-IN')}</span>
-                    </div>
-                    <div className="progress-container">
-                      <div className="progress-bar custom-gradient" style={{width: `${percent}%`, background: 'var(--accent-cyan)'}}></div>
+      {!selectedCategory ? (
+        <>
+          <h2 className="text-xl font-bold mb-4 mt-8">Expense Categories</h2>
+          <div className="grid grid-cols-3 gap-6">
+            {categoryStats.map((cat, i) => {
+              const percent = (cat.total / maxCatAmount) * 100;
+              return (
+                <div key={i} className="card card-hover cursor-pointer" onClick={() => setSelectedCategory(cat.name)}>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-2 font-bold text-lg">
+                       <span className="text-cyan">{getCatIcon(cat.name)}</span>
+                       {cat.name}
                     </div>
                   </div>
-                )
-              })
-            )}
+                  <div className="flex justify-between items-end mt-4">
+                    <div>
+                      <div className="text-sm text-muted mb-1">Total Spent</div>
+                      <div className="text-xl font-bold text-white">₹{cat.total.toLocaleString('en-IN')}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm text-muted mb-1">Expenses</div>
+                      <div className="font-bold">{cat.count}</div>
+                    </div>
+                  </div>
+                  <div className="progress-container mt-4">
+                    <div className="progress-bar custom-gradient" style={{width: `${percent}%`, background: 'var(--accent-cyan)'}}></div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
-
-        <div className="card" style={{gridColumn: 'span 2'}}>
-          <div className="flex justify-between items-center card-header">
-            <h3 className="card-title m-0 border-0">Expense Ledger</h3>
-            <button className="btn btn-primary" onClick={() => { resetExpenseForm(); setShowExpenseForm(!showExpenseForm); }}>
+        </>
+      ) : (
+        <div className="card mt-8">
+          <div className="flex justify-between items-center card-header mb-6">
+            <div className="flex items-center gap-4">
+              <button className="btn btn-secondary btn-icon" onClick={() => { setSelectedCategory(null); setShowExpenseForm(false); }}>
+                <ArrowLeft size={16} />
+              </button>
+              <h3 className="card-title m-0 border-0 flex items-center gap-2">
+                <span className="text-cyan">{getCatIcon(selectedCategory)}</span> {selectedCategory} Expenses
+              </h3>
+            </div>
+            <button className="btn btn-primary" onClick={() => { 
+                resetExpenseForm(); 
+                if (selectedCategory !== 'Other (specify...)') {
+                  setExpenseForm(prev => ({ ...prev, category: selectedCategory }));
+                } else {
+                   setExpenseForm(prev => ({ ...prev, category: 'Other (specify...)' }));
+                }
+                setShowExpenseForm(!showExpenseForm); 
+              }}>
               {showExpenseForm && !editingExpenseId ? 'Cancel' : <><Plus size={16}/> Add Expense</>}
             </button>
           </div>
@@ -643,23 +728,23 @@ function HouseDetail({ navigate, houseId }) {
             <div className="mb-6 p-4 bg-gray-900 rounded-lg animate-fade-in border border-blue-900" style={{backgroundColor: 'rgba(59, 130, 246, 0.05)', borderColor: 'rgba(59, 130, 246, 0.2)'}}>
               <h4 className="font-bold mb-4">{editingExpenseId ? 'Edit Expense' : 'New Expense'}</h4>
               <form onSubmit={handleExpenseSubmit} className="grid grid-cols-2 gap-4">
-                <div className="form-group mb-0">
-                  <label className="form-label">Category</label>
-                  <select className="form-control" value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})}>
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
+                {selectedCategory === 'Other (specify...)' && (
+                  <div className="form-group mb-0" style={{gridColumn: 'span 2'}}>
+                    <label className="form-label">Custom Category Name</label>
+                    <input type="text" className="form-control" placeholder="Specify custom category..." value={customCategoryInput} onChange={e => setCustomCategoryInput(e.target.value)} required />
+                  </div>
+                )}
                 <div className="form-group mb-0">
                   <label className="form-label">Amount (₹)</label>
                   <input type="number" step="0.01" className="form-control" required value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} />
                 </div>
-                <div className="form-group mb-0" style={{gridColumn: 'span 2'}}>
-                  <label className="form-label">Description (Optional)</label>
-                  <input type="text" className="form-control" value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})} />
-                </div>
                 <div className="form-group mb-0">
                   <label className="form-label">Date</label>
                   <input type="date" className="form-control" required value={expenseForm.expenseDate} onChange={e => setExpenseForm({...expenseForm, expenseDate: e.target.value})} />
+                </div>
+                <div className="form-group mb-0" style={{gridColumn: 'span 2'}}>
+                  <label className="form-label">Description (Optional)</label>
+                  <input type="text" className="form-control" value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})} />
                 </div>
                 
                 {/* File Upload Field */}
@@ -717,10 +802,10 @@ function HouseDetail({ navigate, houseId }) {
                 </tr>
               </thead>
               <tbody>
-                {expenses.length === 0 ? (
-                  <tr><td colSpan="6" className="text-center text-muted py-6">No records found</td></tr>
+                {expenses.filter(exp => exp.category === selectedCategory).length === 0 ? (
+                  <tr><td colSpan="6" className="text-center text-muted py-6">No records found for {selectedCategory}</td></tr>
                 ) : (
-                  expenses.map(exp => {
+                  expenses.filter(exp => exp.category === selectedCategory).map(exp => {
                     const attachStr = localStorage.getItem(`expense_attachment_${exp.id}`);
                     const hasAttachment = !!attachStr;
                     return (
@@ -754,7 +839,7 @@ function HouseDetail({ navigate, houseId }) {
             </table>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Site Photos Section */}
       <div className="mt-8 card">

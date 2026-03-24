@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -49,6 +50,7 @@ public class HouseController {
         return ResponseEntity.ok(houseRepository.save(house));
     }
 
+    @Transactional
     @PutMapping("/{id}")
     public ResponseEntity<House> updateHouse(@PathVariable Long id, @RequestBody House houseDetails, @AuthenticationPrincipal UserDetails userDetails) {
         User user = getAuthenticatedUser(userDetails);
@@ -65,6 +67,7 @@ public class HouseController {
                 .orElse(ResponseEntity.status(HttpStatus.FORBIDDEN).build());
     }
 
+    @Transactional
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteHouse(@PathVariable Long id, @AuthenticationPrincipal UserDetails userDetails) {
         User user = getAuthenticatedUser(userDetails);
