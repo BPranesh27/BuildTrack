@@ -15,7 +15,7 @@ const toBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = error => reject(error);
 });
 const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
-axios.defaults.baseURL = 'http://localhost:8080/api';
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 axios.interceptors.request.use(config => {
   const token = localStorage.getItem('token');
   if (token) {
