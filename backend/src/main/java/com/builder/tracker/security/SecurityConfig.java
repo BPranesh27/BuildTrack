@@ -38,7 +38,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .cors(org.springframework.security.config.Customizer.withDefaults())
             .csrf(AbstractHttpConfigurer::disable)
             .exceptionHandling(exc -> exc
                 .authenticationEntryPoint((request, response, authException) -> {
@@ -47,7 +47,7 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/auth/**", "/error", "/favicon.ico", "/static/**", "/css/**", "/js/**", "/images/**").permitAll()
+                .requestMatchers("/api/auth/**", "/api/ping", "/error", "/favicon.ico", "/version.txt", "/static/**", "/css/**", "/js/**", "/images/**").permitAll()
                 .anyRequest().authenticated()
             )
             .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
