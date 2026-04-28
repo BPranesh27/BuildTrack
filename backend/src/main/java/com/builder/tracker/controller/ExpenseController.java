@@ -114,6 +114,9 @@ public class ExpenseController {
             existing.setDescription(expenseDetails.getDescription());
             existing.setAmount(expenseDetails.getAmount());
             existing.setExpenseDate(expenseDetails.getExpenseDate());
+            existing.setAttachment(expenseDetails.getAttachment());
+            existing.setAttachmentName(expenseDetails.getAttachmentName());
+            existing.setAttachmentType(expenseDetails.getAttachmentType());
             
             return ResponseEntity.ok(expenseRepository.save(existing));
         }).orElse(ResponseEntity.notFound().build());

@@ -62,6 +62,7 @@ public class HouseController {
                     existingHouse.setEndDate(houseDetails.getEndDate());
                     existingHouse.setSalePrice(houseDetails.getSalePrice());
                     existingHouse.setStatus(houseDetails.getStatus());
+                    existingHouse.setSitePhotos(houseDetails.getSitePhotos());
                     return ResponseEntity.ok(houseRepository.save(existingHouse));
                 })
                 .orElse(ResponseEntity.status(HttpStatus.FORBIDDEN).build());

@@ -48,6 +48,10 @@ public class House {
     @OneToMany(mappedBy = "house", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Expense> expenses = new ArrayList<>();
 
+    @Lob
+    @Column(name = "site_photos", columnDefinition = "LONGTEXT")
+    private String sitePhotos;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
