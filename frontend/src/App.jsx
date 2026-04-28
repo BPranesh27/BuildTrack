@@ -415,16 +415,18 @@ function HouseDetail({ navigate, houseId }) {
   });
   const [customCategoryInput, setCustomCategoryInput] = useState('');
 
-  const loadSitePhotos = () => {
+  const loadSitePhotos = (houseData) => {
     try {
-      const photos = JSON.parse(localStorage.getItem(`project_files_${houseId}`) || '[]');
-      setSitePhotos(photos);
+      if (houseData && houseData.sitePhotos) {
+        setSitePhotos(JSON.parse(houseData.sitePhotos));
+      } else {
+        setSitePhotos([]);
+      }
     } catch(e) { setSitePhotos([]); }
   };
 
   useEffect(() => {
     fetchData();
-    loadSitePhotos();
   }, [houseId]);
 
   const fetchData = async () => {
@@ -439,6 +441,7 @@ function HouseDetail({ navigate, houseId }) {
       setTotalSpent(totalRes.data);
       setExpenses(expenseRes.data);
       setCategorySummary(catRes.data);
+      loadSitePhotos(houseRes.data);
     } catch (err) {
       console.error(err);
       if (err.response?.status === 403) {
@@ -469,12 +472,10 @@ function HouseDetail({ navigate, houseId }) {
         }
       }
 
-      const payload = { 
-        id: editingExpenseId || undefined,
+      const payload = {
         ...expenseForm,
         expenseDate: formattedDate,
         category: finalCategory,
-        attachment: undefined, attachmentName: undefined, attachmentType: undefined, // remove before sending
         house: { id: houseId }, 
         amount: parseFloat(expenseForm.amount) || 0
       };
@@ -486,20 +487,7 @@ function HouseDetail({ navigate, houseId }) {
         savedExpenseId = res.data.id;
       }
       
-      // Handle attachment
-      if (expenseForm.attachment) {
-        try {
-          localStorage.setItem(`expense_attachment_${savedExpenseId}`, JSON.stringify({
-            data: expenseForm.attachment,
-            name: expenseForm.attachmentName,
-            type: expenseForm.attachmentType
-          }));
-        } catch (err) {
-          if (err.name === 'QuotaExceededError') alert('Storage limit reached. Could not save the attachment.');
-        }
-      } else {
-        localStorage.removeItem(`expense_attachment_${savedExpenseId}`);
-      }
+      // Attachment is now handled by the backend payload
 
       setShowExpenseForm(false);
       setEditingExpenseId(null);
@@ -527,16 +515,9 @@ function HouseDetail({ navigate, houseId }) {
       fmtDate = fmtDate.split('T')[0];
     }
     
-    let attachment = null, attachmentName = '', attachmentType = '';
-    const attachmentStr = localStorage.getItem(`expense_attachment_${exp.id}`);
-    if (attachmentStr) {
-      try {
-        const parsed = JSON.parse(attachmentStr);
-        attachment = parsed.data;
-        attachmentName = parsed.name;
-        attachmentType = parsed.type;
-      } catch(e) {}
-    }
+    const attachment = exp.attachment || null;
+    const attachmentName = exp.attachmentName || '';
+    const attachmentType = exp.attachmentType || '';
 
     let formCategory = exp.category;
     let customInput = '';
@@ -561,7 +542,6 @@ function HouseDetail({ navigate, houseId }) {
     if (!confirm('Are you sure you want to delete this expense?')) return;
     try {
       await axios.delete(`/expenses/${id}`);
-      localStorage.removeItem(`expense_attachment_${id}`);
       fetchData();
     } catch (err) {
       const msg = err.response?.data?.message || err.response?.data || 'Delete failed';
@@ -573,8 +553,6 @@ function HouseDetail({ navigate, houseId }) {
     if (!confirm('Delete this entire project? This action cannot be undone.')) return;
     try {
       await axios.delete(`/houses/${houseId}`);
-      localStorage.removeItem(`project_files_${houseId}`);
-      // Also should theoretically remove expense attachments, but for this local app it's fine.
       navigate('dashboard');
     } catch (err) {
       alert('Delete failed');
@@ -806,8 +784,7 @@ function HouseDetail({ navigate, houseId }) {
                   <tr><td colSpan="6" className="text-center text-muted py-6">No records found for {selectedCategory}</td></tr>
                 ) : (
                   expenses.filter(exp => exp.category === selectedCategory).map(exp => {
-                    const attachStr = localStorage.getItem(`expense_attachment_${exp.id}`);
-                    const hasAttachment = !!attachStr;
+                    const hasAttachment = !!exp.attachment;
                     return (
                     <tr key={exp.id}>
                       <td className="text-sm">{new Date(exp.expenseDate).toLocaleDateString()}</td>
@@ -820,7 +797,7 @@ function HouseDetail({ navigate, houseId }) {
                       <td className="text-right font-bold">₹{exp.amount.toLocaleString('en-IN')}</td>
                       <td className="text-center">
                         {hasAttachment && (
-                          <button className="btn-icon text-cyan hover:text-white mx-auto" title="View Attachment" onClick={() => setPreviewFile(JSON.parse(attachStr))}>
+                          <button className="btn-icon text-cyan hover:text-white mx-auto" title="View Attachment" onClick={() => setPreviewFile({ data: exp.attachment, name: exp.attachmentName, type: exp.attachmentType })}>
                             <Paperclip size={16}/>
                           </button>
                         )}
@@ -870,10 +847,11 @@ function HouseDetail({ navigate, houseId }) {
                 }
                 
                 try {
-                  localStorage.setItem(`project_files_${houseId}`, JSON.stringify(newPhotos));
+                  const updatedHouse = { ...house, sitePhotos: JSON.stringify(newPhotos) };
+                  await axios.put(`/houses/${houseId}`, updatedHouse);
                   setSitePhotos(newPhotos);
                 } catch(err) {
-                  if (err.name === 'QuotaExceededError') alert('Storage limit reached while saving photos.');
+                  alert('Error saving site photos to database.');
                 }
               }} 
             />
@@ -901,12 +879,17 @@ function HouseDetail({ navigate, houseId }) {
                 
                 <div className="absolute inset-0 bg-black bg-opacity-40 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-end p-2 pointer-events-none">
                   <button className="btn-icon bg-danger text-white rounded-full p-1 shadow-lg opacity-0 group-hover:opacity-100 transition-all transform scale-75 group-hover:scale-100 pointer-events-auto hover:bg-red-600" 
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
                       if(!confirm('Delete this file?')) return;
                       const filtered = sitePhotos.filter(p => p.id !== photo.id);
-                      localStorage.setItem(`project_files_${houseId}`, JSON.stringify(filtered));
-                      setSitePhotos(filtered);
+                      try {
+                        const updatedHouse = { ...house, sitePhotos: JSON.stringify(filtered) };
+                        await axios.put(`/houses/${houseId}`, updatedHouse);
+                        setSitePhotos(filtered);
+                      } catch(err) {
+                        alert('Error updating site photos in database.');
+                      }
                     }}>
                     <X size={14} />
                   </button>
