@@ -328,16 +328,23 @@ function HouseForm({ navigate, houseId }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    
+    const payload = { ...formData };
+    if (!payload.startDate) payload.startDate = null;
+    if (!payload.endDate) payload.endDate = null;
+
     try {
       if (isEditing) {
-        await axios.put(`/houses/${houseId}`, formData);
+        await axios.put(`/houses/${houseId}`, payload);
         navigate('houseDetail', houseId);
       } else {
-        const res = await axios.post('/houses', formData);
+        const res = await axios.post('/houses', payload);
         navigate('houseDetail', res.data.id);
       }
     } catch (err) {
-      alert('Error saving house');
+      console.error('Error saving house:', err);
+      const errorMessage = err.response?.data?.message || err.response?.data || 'An error occurred while saving the project.';
+      alert(`Error: ${typeof errorMessage === 'string' ? errorMessage : 'Server error'}`);
     } finally {
       setLoading(false);
     }
